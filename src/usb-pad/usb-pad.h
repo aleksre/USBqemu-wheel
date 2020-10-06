@@ -71,6 +71,25 @@ public:
 	static void Initialize();
 };
 
+class SeamicDevice
+{
+public:
+	virtual ~SeamicDevice() { }
+	static USBDevice* CreateDevice(int port);
+	static const TCHAR* Name()
+	{
+		return TEXT("Sega Seamic");
+	}
+	static const char* TypeName()
+	{
+		return "seamic";
+	}
+	static std::list<std::string> ListAPIs();
+	static const TCHAR* LongAPIName(const std::string& name);
+	static int Configure(int port, const std::string& api, void *data);
+	static int Freeze(int mode, USBDevice *dev, void *data);
+};
+
 class KeyboardmaniaDevice
 {
 public:
@@ -82,13 +101,13 @@ public:
 	}
 	static const char* TypeName()
 	{
-		return "keyboardmania_device";
+		return "keyboardmania";
 	}
 	static std::list<std::string> ListAPIs();
 	static const TCHAR* LongAPIName(const std::string& name);
 	static int Configure(int port, const std::string& api, void *data);
 	static int Freeze(int mode, USBDevice *dev, void *data);
-};
+}
 
 // Most likely as seen on https://github.com/matlo/GIMX
 #define CMD_DOWNLOAD			0x00
@@ -137,6 +156,7 @@ enum PS2WheelTypes {
 	WT_GT_FORCE, //formula gp
 	WT_ROCKBAND1_DRUMKIT,
 	WT_BUZZ_CONTROLLER,
+	WT_SEGA_SEAMIC,
 	WT_KEYBOARDMANIA_CONTROLLER,
 };
 
@@ -144,6 +164,8 @@ inline int range_max(PS2WheelTypes type)
 {
 	if(type == WT_DRIVING_FORCE_PRO || type == WT_DRIVING_FORCE_PRO_1102)
 		return 0x3FFF;
+	if (type == WT_SEGA_SEAMIC)
+		return 255;
 	return 0x3FF;
 }
 
@@ -283,7 +305,7 @@ struct FFDevice
 	virtual void SetSpringForce(const parsed_ff_data& ff) = 0;
 	virtual void SetDamperForce(const parsed_ff_data& ff) = 0;
 	virtual void SetFrictionForce(const parsed_ff_data& ff) = 0;
-	//virtual void SetAutoCenter(int value) = 0;
+	virtual void SetAutoCenter(int value) = 0;
 	//virtual void SetGain(int gain) = 0;
 	virtual void DisableForce(EffectID force) = 0;
 };
@@ -319,7 +341,7 @@ protected:
 
 //L3/R3 for newer wheels
 //enum PS2Buttons : uint32_t {
-//	PAD_CROSS = 0, PAD_SQUARE, PAD_CIRCLE, PAD_TRIANGLE, 
+//	PAD_CROSS = 0, PAD_SQUARE, PAD_CIRCLE, PAD_TRIANGLE,
 //	PAD_L1, PAD_L2, PAD_R1, PAD_R2,
 //	PAD_SELECT, PAD_START,
 //	PAD_L3, PAD_R3, //order
@@ -328,10 +350,10 @@ protected:
 
 //???
 //enum DFButtons : uint32_t {
-//	PAD_CROSS = 0, PAD_SQUARE, PAD_CIRCLE, PAD_TRIANGLE, 
-//	PAD_R2, 
+//	PAD_CROSS = 0, PAD_SQUARE, PAD_CIRCLE, PAD_TRIANGLE,
+//	PAD_R2,
 //	PAD_L2,
-//	PAD_R1, 
+//	PAD_R1,
 //	PAD_L1,
 //	PAD_SELECT, PAD_START,
 //	PAD_BUTTON_COUNT
@@ -347,7 +369,7 @@ enum PS2Buttons : uint32_t {
 	PAD_TRIANGLE, //Y
 	PAD_R1, //A? <pause> in GT4
 	PAD_L1, //B
-	PAD_R2, 
+	PAD_R2,
 	PAD_L2,
 	PAD_SELECT, PAD_START,
 	PAD_R3, PAD_L3, //order, only GT Force/Force EX?
@@ -405,10 +427,10 @@ static const int HATS_8TO4 [] = {PAD_HAT_N, PAD_HAT_E, PAD_HAT_S, PAD_HAT_W};
 /**
   linux hid-lg4ff.c
   http://www.spinics.net/lists/linux-input/msg16570.html
-  Every Logitech wheel reports itself as generic Logitech Driving Force wheel (VID 046d, PID c294). This is done to ensure that the 
-  wheel will work on every USB HID-aware system even when no Logitech driver is available. It however limits the capabilities of the 
-  wheel - range is limited to 200 degrees, G25/G27 don't report the clutch pedal and there is only one combined axis for throttle and 
-  brake. The switch to native mode is done via hardware-specific command which is different for each wheel. When the wheel 
+  Every Logitech wheel reports itself as generic Logitech Driving Force wheel (VID 046d, PID c294). This is done to ensure that the
+  wheel will work on every USB HID-aware system even when no Logitech driver is available. It however limits the capabilities of the
+  wheel - range is limited to 200 degrees, G25/G27 don't report the clutch pedal and there is only one combined axis for throttle and
+  brake. The switch to native mode is done via hardware-specific command which is different for each wheel. When the wheel
   receives such command, it simulates reconnect and reports to the OS with its actual PID.
   Currently not emulating reattachment. Any games that expect to?
 **/
@@ -998,7 +1020,7 @@ static const uint8_t gtforce_config_descriptor[] = {
 	0x0A,                               //Interval
 };
 
-// Should be usb 2.0, but seems to make no difference with Rock Band games 
+// Should be usb 2.0, but seems to make no difference with Rock Band games
 static const uint8_t rb1_dev_descriptor[] = {
 	/* bLength             */ 0x12, //(18)
 	/* bDescriptorType     */ 0x01, //(1)
@@ -1288,17 +1310,17 @@ static const uint8_t kbm_config_descriptor[] = {
 };
 
 static const uint8_t kbm_hid_report_descriptor[] = {
-    0x05, 0x01,  // USAGE_PAGE (Generic Desktop)
-    0x09, 0x05,  // USAGE (Game Pad)
-    0xA1, 0x01,  // COLLECTION (Application)
-    0x05, 0x09,  //   USAGE_PAGE (Button)
-    0x19, 0x3A,  //   USAGE_MINIMUM (Button 58)
-    0x29, 0x3F,  //   USAGE_MAXIMUM (Button 63)
-    0x15, 0x00,  //   LOGICAL_MINIMUM (0)
-    0x25, 0x01,  //   LOGICAL_MAXIMUM (1)
-    0x75, 0x01,  //   REPORT_SIZE (1)
-    0x95, 0x06,  //   REPORT_COUNT (6)
-    0x81, 0x02,  //   INPUT (Data,Variable,Absolute,NoWrap,Linear,PrefState,NoNull,NonVolatile,Bitmap)
+	0x05, 0x01,  // USAGE_PAGE (Generic Desktop)
+	0x09, 0x05,  // USAGE (Game Pad)
+	0xA1, 0x01,  // COLLECTION (Application)
+	0x05, 0x09,  //   USAGE_PAGE (Button)
+	0x19, 0x3A,  //   USAGE_MINIMUM (Button 58)
+	0x29, 0x3F,  //   USAGE_MAXIMUM (Button 63)
+	0x15, 0x00,  //   LOGICAL_MINIMUM (0)
+	0x25, 0x01,  //   LOGICAL_MAXIMUM (1)
+	0x75, 0x01,  //   REPORT_SIZE (1)
+	0x95, 0x06,  //   REPORT_COUNT (6)
+	0x81, 0x02,  //   INPUT (Data,Variable,Absolute,NoWrap,Linear,PrefState,NoNull,NonVolatile,Bitmap)
 	0x75, 0x01,  //   REPORT_SIZE (1)
 	0x95, 0x02,  //   REPORT_COUNT (2)
 	0x81, 0x01,  //   INPUT (Constant,Array,Absolute)
@@ -1363,7 +1385,7 @@ static const uint8_t kbm_hid_report_descriptor[] = {
 	0x75, 0x08,  //   REPORT_SIZE (8)
 	0x95, 0x02,  //   REPORT_COUNT (2)
 	0x81, 0x01,  //   INPUT (Constant,Array,Absolute)
-    0xc0         // END_COLLECTION
+	0xc0         // END_COLLECTION
 };
 
 struct dfp_buttons_t
@@ -1467,11 +1489,11 @@ struct gtforce_data_t
 
 	uint32_t axis_z : 8;
 	uint32_t axis_rz : 8;
-	
+
 	uint32_t pad1 : 16;
 };
 
-struct random_data_t 
+struct random_data_t
 {
 	uint32_t axis_x : 10;
 	uint32_t buttons : 10;
@@ -1502,13 +1524,6 @@ struct rb1drumkit_t
 	} u;
 
 	uint8_t hatswitch;
-};
-
-struct kbm_data_t // Is this needed?
-{
-	uint8_t report_id;
-	uint32_t buttons;
-
 };
 
 void pad_reset_data(generic_data_t *d);

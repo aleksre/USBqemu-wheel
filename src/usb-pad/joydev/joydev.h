@@ -5,9 +5,9 @@
 
 namespace usb_pad { namespace joydev {
 
-void EnumerateDevices(vstring& list);
+void EnumerateDevices(device_list& list);
 
-static const char *APINAME = "joydev";
+static constexpr const char *APINAME = "joydev";
 
 class JoyDevPad : public Pad
 {
@@ -30,8 +30,8 @@ public:
 
 	static int Configure(int port, const char* dev_type, void *data);
 protected:
-	int mHandleFF;
-	struct wheel_data_t mWheelData;
+	int mHandleFF = -1;
+	struct wheel_data_t mWheelData {};
 	std::vector<evdev::device_data> mDevices;
 };
 

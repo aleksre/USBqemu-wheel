@@ -421,9 +421,7 @@ static void eyetoy_handle_data(USBDevice *dev, USBPacket *p)
 	EYETOYState *s = (EYETOYState *)dev;
 	static const int max_ep_size = 896;
 	uint8_t data[max_ep_size];
-	int ret = 0;
 	uint8_t devep = p->ep->nr;
-	size_t len = p->iov.size;
 
 	switch(p->pid) {
 	case USB_TOKEN_IN:
@@ -454,15 +452,15 @@ static void eyetoy_handle_data(USBDevice *dev, USBPacket *p)
 				s->mpeg_frame_offset = data_pk;
 
 				s->frame_step++;
-			} else if (s->frame_step < 10) {
+			} else if (s->mpeg_frame_offset < s->mpeg_frame_size) {
 				int data_pk = s->mpeg_frame_size - s->mpeg_frame_offset;
 				if (data_pk > max_ep_size)
 					data_pk = max_ep_size;
 				memcpy(data, s->mpeg_frame_data + s->mpeg_frame_offset, data_pk);
 				s->mpeg_frame_offset += data_pk;
 
-				s->frame_step++;
-			} else if (s->frame_step == 10) {
+				//s->frame_step++;
+			} else {
 				uint8_t footer[] = {
 					0xFF, 0xFF, 0xFF, 0x51, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00
 				};
@@ -515,7 +513,7 @@ USBDevice *EyeToyWebCamDevice::CreateDevice(int port)
 	VideoDeviceProxyBase *proxy = RegisterVideoDevice::instance().Proxy(varApi);
 	if (!proxy)
 	{
-		SysMessage(TEXT("Invalid video device API: " SFMTs "\n"), varApi.c_str());
+		SysMessage(TEXT("Invalid video device API: %" SFMTs "\n"), varApi.c_str());
 		return NULL;
 	}
 
@@ -578,17 +576,17 @@ int EyeToyWebCamDevice::Configure(int port, const std::string& api, void *data)
 
 int EyeToyWebCamDevice::Freeze(int mode, USBDevice *dev, void *data)
 {
+	/*
 	EYETOYState *s = (EYETOYState *)dev;
 
-	/*switch (mode)
+	if (!s) return 0;
+	switch (mode)
 	{
 		case FREEZE_LOAD:
-			if (!s) return -1;
 			s->f = *(PADState::freeze *)data;
 			s->pad->Type((PS2WheelTypes)s->f.wheel_type);
 			return sizeof(PADState::freeze);
 		case FREEZE_SAVE:
-			if (!s) return -1;
 			*(PADState::freeze *)data = s->f;
 			return sizeof(PADState::freeze);
 		case FREEZE_SIZE:
@@ -596,7 +594,7 @@ int EyeToyWebCamDevice::Freeze(int mode, USBDevice *dev, void *data)
 		default:
 		break;
 	}*/
-	return -1;
+	return 0;
 }
 
 } //namespace

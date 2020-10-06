@@ -1,5 +1,5 @@
 
-
+#include <guiddef.h>
 #include "videodev.h"
 #include "cam-windows.h"
 #include "usb-eyetoy-webcam.h"
@@ -7,6 +7,94 @@
 
 #include "../Win32/Config.h"
 #include "../Win32/resource.h"
+
+#ifndef DIBSIZE
+#define WIDTHBYTES(BTIS) ((DWORD)(((BTIS)+31) & (~31)) / 8)
+#define DIBWIDTHBYTES(BI) (DWORD)(BI).biBitCount) * (DWORD)WIDTHBYTES((DWORD)(BI).biWidth
+#define _DIBSIZE(BI) (DIBWIDTHBYTES(BI) * (DWORD)(BI).biHeight)
+#define DIBSIZE(BI) ((BI).biHeight < 0 ? (-1)*(_DIBSIZE(BI)) : _DIBSIZE(BI))
+#endif
+
+constexpr GUID make_guid(const char* const spec) {
+	#define nybble_from_hex(c)      ((c>='0'&&c<='9')?(c-'0'):((c>='a'&&c<='f')?(c-'a' + 10):((c>='A'&&c<='F')?(c-'A' + 10):0)))
+	#define byte_from_hex(c1, c2)   ((nybble_from_hex(c1)<<4)|nybble_from_hex(c2))
+
+	return {
+		// Data1
+		(((((((((((((
+			static_cast<unsigned __int32>( nybble_from_hex( spec[0] ) )
+			<< 4) | nybble_from_hex( spec[1] ))
+			<< 4) | nybble_from_hex( spec[2] ))
+			<< 4) | nybble_from_hex( spec[3] ))
+			<< 4) | nybble_from_hex( spec[4] ))
+			<< 4) | nybble_from_hex( spec[5] ))
+			<< 4) | nybble_from_hex( spec[6] ))
+			<< 4) | nybble_from_hex( spec[7] ),
+		// Data2
+		static_cast<unsigned short>(
+			(((((
+				static_cast<unsigned>( nybble_from_hex( spec[9] ) )
+				<< 4) | nybble_from_hex( spec[10] ))
+				<< 4) | nybble_from_hex( spec[11] ))
+				<< 4) | nybble_from_hex( spec[12] )
+			),
+		// Data 3
+		static_cast<unsigned short>(
+			(((((
+				static_cast<unsigned>( nybble_from_hex( spec[14] ) )
+				<< 4) | nybble_from_hex( spec[15] ))
+				<< 4) | nybble_from_hex( spec[16] ))
+				<< 4) | nybble_from_hex( spec[17] )
+			),
+		// Data 4
+		{
+			static_cast<unsigned char>( byte_from_hex( spec[19], spec[20] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[21], spec[22] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[24], spec[25] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[26], spec[27] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[28], spec[29] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[30], spec[31] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[32], spec[33] ) ),
+			static_cast<unsigned char>( byte_from_hex( spec[34], spec[35] ) )
+		}
+	};
+}
+
+#if defined( _MSC_VER )
+#   define CPPX_MSVC_UUID_FOR( name, spec )    \
+        class __declspec( uuid( spec ) ) name
+#else
+#   define CPPX_GNUC_UUID_FOR( name, spec )    \
+    template<>                                  \
+    inline                                      \
+    auto __mingw_uuidof<name>()                 \
+        -> GUID const&                          \
+    {                                           \
+        static constexpr GUID the_uuid = make_guid(spec); \
+                                                \
+        return the_uuid;                        \
+    }                                           \
+                                                \
+    template<>                                  \
+    inline                                      \
+    auto __mingw_uuidof<name*>()                \
+        -> GUID const&                          \
+    { return __mingw_uuidof<name>(); }          \
+                                                \
+    static_assert( true, "" )
+#endif
+
+#if !defined( CPPX_UUID_FOR )
+#   if defined( _MSC_VER )
+#       define CPPX_UUID_FOR    CPPX_MSVC_UUID_FOR
+#   elif defined( __GNUC__ )
+#       define CPPX_UUID_FOR    CPPX_GNUC_UUID_FOR
+#   endif
+#endif
+
+CPPX_UUID_FOR(ISampleGrabber, "6b652fff-11fe-4fce-92ad-0266b5d7c78f");
+CPPX_UUID_FOR(ISampleGrabberCB, "0579154a-2b53-4994-b0d0-e773148eff85");
+//CPPX_UUID_FOR(SampleGrabber, "c1f400a0-3f08-11d3-9f0b-006008039e37");
 
 namespace usb_eyetoy
 {
@@ -20,7 +108,7 @@ HRESULT DirectShow::CallbackHandler::SampleCB(double time, IMediaSample *sample)
 	hr = sample->GetPointer((BYTE**)&buffer);
 	if (hr != S_OK) return S_OK;
 
-	if (callback) callback(buffer, sample->GetActualDataLength(), BITS_PER_PIXEL);
+	if (parent) std::invoke(&DirectShow::dshow_callback, parent, buffer, sample->GetActualDataLength(), BITS_PER_PIXEL);
 	return S_OK;
 }
 
@@ -34,6 +122,7 @@ HRESULT DirectShow::CallbackHandler::QueryInterface(REFIID iid, LPVOID *ppv) {
 
 std::vector<std::wstring> getDevList() {
 	std::vector<std::wstring> devList;
+	devList.push_back(L"None");
 
 	ICreateDevEnum *pCreateDevEnum = 0;
 	HRESULT hr = CoCreateInstance(CLSID_SystemDeviceEnum, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&pCreateDevEnum));
@@ -43,8 +132,8 @@ std::vector<std::wstring> getDevList() {
 	}
 
 	IEnumMoniker *pEnum = 0;
-	hr = pCreateDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, NULL);
-	if (FAILED(hr)) {
+	hr = pCreateDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, 0);
+	if (hr == S_FALSE || FAILED(hr)) {
 		fprintf(stderr, "You have no video capture hardware");
 		return devList;
 	};
@@ -116,8 +205,8 @@ int DirectShow::InitializeDevice(std::wstring selectedDevice) {
 	}
 
 	IEnumMoniker *pEnum = 0;
-	hr = pCreateDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, NULL);
-	if (FAILED(hr)) {
+	hr = pCreateDevEnum->CreateClassEnumerator(CLSID_VideoInputDeviceCategory, &pEnum, 0);
+	if (hr == S_FALSE || FAILED(hr)) {
 		fprintf(stderr, "You have no video capture hardware");
 		return -1;
 	};
@@ -249,7 +338,8 @@ int DirectShow::InitializeDevice(std::wstring selectedDevice) {
 		}
 
 		// if the stream is started, start capturing immediatly
-		LONGLONG start = 0, stop = MAXLONGLONG;
+		LONGLONG start, stop;
+		start = 0; stop = MAXLONGLONG;
 		hr = pGraphBuilder->ControlStream(&PIN_CATEGORY_CAPTURE, &MEDIATYPE_Video, sourcefilter, &start, &stop, 1, 2);
 		if (FAILED(hr)) {
 			fprintf(stderr, "ControlStream err : %x\n", hr);
@@ -282,6 +372,9 @@ void DirectShow::Start() {
 }
 
 void DirectShow::Stop() {
+	if (!sourcefilter)
+		return;
+
 	HRESULT hr = sourcefilter->Stop();
 	if (FAILED(hr)) throw hr;
 
@@ -292,47 +385,43 @@ void DirectShow::Stop() {
 	if (FAILED(hr)) throw hr;
 }
 
-buffer_t mpeg_buffer {};
-std::mutex mpeg_mutex;
-
-void store_mpeg_frame(unsigned char *data, unsigned int len) {
-	mpeg_mutex.lock();
-	memcpy(mpeg_buffer.start, data, len);
-	mpeg_buffer.length = len;
-	mpeg_mutex.unlock();
+void DirectShow::store_mpeg_frame(const std::vector<unsigned char>& data) {
+	std::lock_guard<std::mutex> lk(mpeg_mutex);
+	mpeg_buffer = data;
 }
 
-void dshow_callback(unsigned char *data, int len, int bitsperpixel) {
+void DirectShow::dshow_callback(unsigned char *data, int len, int bitsperpixel) {
 	if (bitsperpixel == 24) {
-		unsigned char *mpegData = (unsigned char *)calloc(1, 320 * 240 * 2);
-		int mpegLen = jo_write_mpeg(mpegData, data, 320, 240, JO_RGB24, JO_FLIP_X, JO_FLIP_Y);
-		store_mpeg_frame(mpegData, mpegLen);
-		free(mpegData);
+		std::vector<unsigned char> mpegData (320 * 240 * 2);
+		int mpegLen = jo_write_mpeg(mpegData.data(), data, 320, 240, JO_RGB24, JO_FLIP_X, JO_FLIP_Y);
+		//OSDebugOut(_T("MPEG: alloced: %d, got: %d\n"), mpegData.size(), mpegLen);
+		mpegData.resize(mpegLen);
+		store_mpeg_frame(mpegData);
 	} else {
 		fprintf(stderr, "dshow_callback: unk format: len=%d bpp=%d\n", len, bitsperpixel);
 	}
 }
 
-void create_dummy_frame() {
+void DirectShow::create_dummy_frame() {
 	const int width = 320;
 	const int height = 240;
 	const int bytesPerPixel = 3;
 
-	unsigned char *rgbData = (unsigned char*) calloc(1, width * height * bytesPerPixel);
+	std::vector<unsigned char> rgbData (width * height * bytesPerPixel, 0);
 	for (int y = 0; y < height; y++) {
 		for (int x = 0; x < width; x++) {
-			unsigned char *ptr = rgbData + (y*width+x) * bytesPerPixel;
-			ptr[0] = 255-y;
-			ptr[1] = y;
-			ptr[2] = 255-y;
+			unsigned char *ptr = &rgbData [(y*width+x) * bytesPerPixel];
+			int c = (255 * y) / height;
+			ptr[0] = 255-c;
+			ptr[1] = c;
+			ptr[2] = 255-c;
 		}
 	}
-	unsigned char *mpegData = (unsigned char*) calloc(1, width * height * bytesPerPixel);
-	int mpegLen = jo_write_mpeg(mpegData, rgbData, width, height, JO_RGB24, JO_NONE, JO_NONE);
-	free(rgbData);
 
-	store_mpeg_frame(mpegData, mpegLen);
-	free(mpegData);
+	std::vector<unsigned char> mpegData (width * height * bytesPerPixel, 255);
+	int mpegLen = jo_write_mpeg(mpegData.data(), rgbData.data(), width, height, JO_RGB24, JO_NONE, JO_NONE);
+	mpegData.resize(mpegLen);
+	store_mpeg_frame(mpegData);
 }
 
 DirectShow::DirectShow(int port) {
@@ -345,12 +434,14 @@ DirectShow::DirectShow(int port) {
 	nullrenderer = NULL;
 	pSourceConfig = NULL;
 	samplegrabber = NULL;
-	callbackhandler = new CallbackHandler();
+	callbackhandler = new CallbackHandler(this);
 	CoInitialize(NULL);
 }
 
 int DirectShow::Open() {
-	mpeg_buffer.start = calloc(1, 320 * 240 * 2);
+	mpeg_buffer.resize(320 * 240 * 2);
+	std::fill(mpeg_buffer.begin(), mpeg_buffer.end(), 0);
+
 	create_dummy_frame();
 
 	std::wstring selectedDevice;
@@ -364,41 +455,40 @@ int DirectShow::Open() {
 
 	pControl->Run();
 	this->Stop();
-	this->SetCallback(dshow_callback);
 	this->Start();
 
 	return 0;
 };
 
 int DirectShow::Close() {
-	if (sourcefilter != NULL) {
-		this->Stop();
-		pControl->Stop();
+	if (!sourcefilter)
+		return 0;
 
-		sourcefilter->Release();
-		pSourceConfig->Release();
-		samplegrabberfilter->Release();
-		samplegrabber->Release();
-		nullrenderer->Release();
-	}
+	this->Stop();
+	pControl->Stop();
+
+	sourcefilter->Release();
+	pSourceConfig->Release();
+	samplegrabberfilter->Release();
+	samplegrabber->Release();
+	nullrenderer->Release();
+	sourcefilter = nullptr;
 
 	pGraphBuilder->Release();
 	pGraph->Release();
 	pControl->Release();
 
-	if (mpeg_buffer.start != NULL) {
-		free(mpeg_buffer.start);
-		mpeg_buffer.start = NULL;
-	}
+	std::lock_guard<std::mutex>  lck(mpeg_mutex);
+	mpeg_buffer.resize(0);
+
 	return 0;
 };
 
 int DirectShow::GetImage(uint8_t *buf, int len) {
-	mpeg_mutex.lock();
-	int len2 = mpeg_buffer.length;
-	if (len < mpeg_buffer.length) len2 = len;
-	memcpy(buf, mpeg_buffer.start, len2);
-	mpeg_mutex.unlock();
+	std::lock_guard<std::mutex>  lck(mpeg_mutex);
+	int len2 = mpeg_buffer.size();
+	if (len < mpeg_buffer.size()) len2 = len;
+	memcpy(buf, mpeg_buffer.data(), len2);
 	return len2;
 };
 

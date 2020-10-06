@@ -178,7 +178,7 @@ static void configureApi (GtkWidget *widget, gpointer data)
 
 GtkWidget *new_combobox(const char* label, GtkWidget *vbox)
 {
-	GtkWidget *ro_label, *rs_hbox, *rs_label, *rs_cb;
+	GtkWidget *rs_hbox, *rs_label, *rs_cb;
 
 	rs_hbox = gtk_hbox_new (FALSE, 0);
 	gtk_box_pack_start (GTK_BOX (vbox), rs_hbox, FALSE, TRUE, 0);
@@ -207,15 +207,10 @@ static GtkWidget* new_frame(const char *label, GtkWidget *box)
 	return vbox;
 }
 
-#ifdef __cplusplus
-extern "C" {
-#endif
-
-void CALLBACK USBconfigure() {
+EXPORT_C_(void) USBconfigure() {
 
 	RegisterDevice::Register();
 	LoadConfig();
-	void * that = NULL;
 	SettingsCB settingsCB[2];
 	settingsCB[0].player = 0;
 	settingsCB[1].player = 1;
@@ -224,7 +219,7 @@ void CALLBACK USBconfigure() {
 	const char *players[] = {"Player 1:", "Player 2:"};
 
 	GtkWidget *rs_cb, *vbox;
-	uint32_t idx = 0, sel_idx = 0;
+	uint32_t sel_idx = 0;
 
 	// Create the dialog window
 	GtkWidget *dlg = gtk_dialog_new_with_buttons (
@@ -252,10 +247,14 @@ void CALLBACK USBconfigure() {
 		gtk_combo_box_set_active (GTK_COMBO_BOX (rs_cb), 0);
 
 		auto devices = RegisterDevice::instance().Names();
-		int idx = 0, selected = 0;
+		int idx = 0;
 		for(auto& device : devices)
 		{
 			auto deviceProxy = RegisterDevice::instance().Device(device);
+			if (!deviceProxy) {
+				OSDebugOut(_T("Device '%" SFMTs "' is registered, but failed to get proxy!\n"), device.c_str());
+				continue;
+			}
 			auto name = deviceProxy->Name();
 			gtk_combo_box_text_append_text (GTK_COMBO_BOX_TEXT (rs_cb), name );
 			idx++;
@@ -325,9 +324,5 @@ void CALLBACK USBconfigure() {
 //	ClearAPIs();
 }
 
-void CALLBACK USBabout() {
+EXPORT_C_(void) USBabout() {
 }
-
-#ifdef __cplusplus
-} //extern "C"
-#endif
