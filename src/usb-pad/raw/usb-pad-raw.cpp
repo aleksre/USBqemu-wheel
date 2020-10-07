@@ -421,6 +421,10 @@ int RawInputPad::Open()
 
 	LoadSetting(mDevType, mPort, APINAME, N_WHEEL_PT, mDoPassthrough);
 
+	if (mDevType == "keyboardmania") {
+		// ???
+	}
+
 	mUsbHandle = CreateFileW(path.c_str(), GENERIC_READ|GENERIC_WRITE,
 		FILE_SHARE_READ|FILE_SHARE_WRITE, 0, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, 0);
 
@@ -430,7 +434,10 @@ int RawInputPad::Open()
 		mOLWrite.hEvent = CreateEvent(0, 0, 0, 0);
 
 		HidD_GetAttributes(mUsbHandle, &(attr));
-		if (attr.VendorID != PAD_VID || attr.ProductID == 0xC262) {
+
+		bool isLogitech = attr.VendorID != PAD_VID || attr.ProductID == 0xC262;
+		bool isKeyboardmania = attr.VendorID != 0x0507 && attr.ProductID != 0x0010;
+		if (!isLogitech && !isKeyboardmania) {
 			fwprintf(stderr, TEXT("USBqemu: Vendor is not Logitech or wheel is G920. Not sending force feedback commands for safety reasons.\n"));
 			mDoPassthrough = 0;
 			Close();
